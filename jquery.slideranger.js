@@ -9,15 +9,13 @@
 
         slideRanger.vars = //for set and get, and defaults.
         {
-            borderValueMin: 0
         };
 
         slideRanger.settings = jQuery.extend //set settings, and let options override 'em
         ({
             onUpdate      : false,
             onInit        : false,
-            display       : true,
-            handleLabels  : false,
+            display       : false,
             hideSelects   : true,
             selectors :  //selectors or elements are both allowed. In case of a selector, the slideRanger will look in its main div.
             {
@@ -26,7 +24,8 @@
                 slider     : '.slider',
                 displayMin : '.displayMin',
                 displayMax : '.displayMax'
-            }
+            },
+            preventSameValue: false
         }, options);
 
         slideRanger.methods =
@@ -41,15 +40,28 @@
                 {
                     this.autoSelectors();
                     this.setMinMax();
-
-                    rangeMax = slideRanger.methods.get('rangeMax');
-  
+                    
+                    this.set('prevMax', this.getMaxValue());    // config
+                    this.set('prevMin', this.getMinValue());    // config
+                    
                     this.initJquerySlider();
+                    this.selectEvents();
                     this.hideSelects();
                     this.updateDisplay();
-                    this.updateHandleLabels();
                     this.onInit();
                 }
+            },
+
+            selectEvents: function ()
+            {
+                $(slideRanger.settings.selectors.min).change(function()
+                {   
+                    slideRanger.slider.slider("values", 0, $(this).find(":selected").index());
+                });
+                $(slideRanger.settings.selectors.max).change(function()
+                {
+                    slideRanger.slider.slider("values", 1, $(this).find(":selected").index());
+                });
             },
 
             /**
@@ -73,7 +85,8 @@
             setMinMax : function ()
             {
                 slideRanger.methods.set('rangeMin', 0);
-                slideRanger.methods.set('rangeMax', slideRanger.settings.selectors.min.find('option').size() - 1);
+                var el = slideRanger.settings.selectors.max.find('option');
+                slideRanger.methods.set('rangeMax', el.length - 1);
             },
 
             /**
@@ -82,20 +95,25 @@
              */
             initJquerySlider : function ()
             {
+                var i = 0;
+                var curMax = slideRanger.settings.selectors.max.find('option:selected').index();
+                
                 //initialize the jquery ui slider.
                 slideRanger.slider  = jQuery(slideRanger).slider
                 ({
                     min: slideRanger.methods.get('rangeMin'),
                     max: slideRanger.methods.get('rangeMax'),
-                    values: [slideRanger.methods.getMinIndex(slideRanger.methods.get('rangeMin')), slideRanger.methods.getMaxIndex(slideRanger.methods.get('rangeMax'))],
+                    values: [slideRanger.methods.getMinIndex(slideRanger.methods.get('rangeMin')), curMax],
                     slide: function( event, ui )
                     {
                         slideRanger.methods.updateSliderSelectValues(ui);
+                        slideRanger.addClass('busy');
                     },
                     stop: function( event, ui )
                     {
                         slideRanger.methods.updateSlideStop(ui);
-                    }
+                    },
+                    range: true /*@todo: fix it in V2 / @see 11966 of jquery.ui.1.11.2 to prevent ui fuckups*/
                 });
             },
 
@@ -132,17 +150,26 @@
                     max = Math.min(this.get('rangeMax'), min + 1);
                 }
 
-                //they may not be the same. One step seperation.
-                if(min == this.get('rangeMax'))
+                if(slideRanger.settings.preventSameValue)
                 {
-                    min--;
+                    //they cannot be the same.
+                    if(min == this.get('rangeMax'))
+                    {
+                        min--;
+                    }
+                    else if(max == this.get('rangeMin'))
+                    {
+                        max++;
+                    }
                 }
-                else if(max == this.get('rangeMin'))
-                {
-                    max++;
-                }
-
+                
                 this.updateMinMax(min, max);
+                
+                this.set('prevMin', min);
+                this.set('prevMax', max);
+                
+                slideRanger.settings.selectors.min.change().blur();
+                slideRanger.settings.selectors.max.change().blur();
             },
 
             /**
@@ -161,32 +188,7 @@
                 this.setSelectValueMin(min);// update our select box min
                 this.setSelectValueMax(max);// update our select box max
                 this.updateDisplay();       // update html element display
-                this.updateHandleLabels();  // update the labels ON the handles... if configured to be true
                 this.onUpdate();
-            },
-
-            /**
-             * Update the labels of the handles with the price. The jquery ui handles.
-             * Only if it is enabled in settings.handleLabels.
-             */
-            updateHandleLabels : function()
-            {
-                if(slideRanger.settings.handleLabels)
-                {
-                    slideRanger.slider.find("a").each(function(i)
-                    {
-                        //Detect the first and second jquery ui slider handles. The form the range.
-                        //Those handles have no identifier: use the order of the elements.
-                        if(i == 0) //leftbar
-                        {
-                            jQuery(this).text(slideRanger.methods.getMinValue());
-                        }
-                        else //rightbar
-                        {
-                            jQuery(this).text(slideRanger.methods.getMaxValue());
-                        }
-                    });
-                }
             },
 
             /**
@@ -256,7 +258,7 @@
                 {
                     return selectElem.find('option:selected').text();
                 }
-                return selectElem.find('option:selected').attr('value');
+                return selectElem[0].selectedIndex;
             },
 
             /**
@@ -288,11 +290,19 @@
              */
             setNewMin : function (min, max)
             {
+                var newmin;
+                if(slideRanger.settings.preventSameValue)
+                {
+                    newmin = max - 1;
+                }
+                else
+                {
+                    newmin = max;
+                }
                 if (this.get('curMax') != max
-                    && max > this.get('rangeMin')
                     && max <= min)
                     {
-                    min = max - 1 ;
+                    min = newmin;
                 }
                 return min;
             },
@@ -302,11 +312,19 @@
              */
             setNewMax : function (min, max)
             {
+                var newmax;
+                if(slideRanger.settings.preventSameValue)
+                {
+                    newmax = min + 1;
+                }
+                else
+                {
+                    newmax = min;
+                }
                 if (this.get('curMin') != min
-                    && min < this.get('rangeMax')
                     && min >= max)
                 {
-                    max = min + 1;
+                    max = newmax;
                 }
                 return max;
             },
